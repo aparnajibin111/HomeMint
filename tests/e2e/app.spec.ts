@@ -61,6 +61,8 @@ test('rejects mismatched custom splits, then saves valid ones', async ({ page })
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('What was it for?').fill('Shared dinner');
   await dialog.getByLabel('Amount (INR)').fill('100');
+  await expect(dialog.getByRole('combobox', { name: 'Split method' })).not.toBeVisible();
+  await dialog.getByRole('checkbox', { name: /Split this expense/ }).check();
   await dialog.getByRole('combobox', { name: 'Split method' }).selectOption('custom');
   await dialog.getByRole('spinbutton', { name: "Alex's share" }).fill('60');
   await dialog.getByRole('spinbutton', { name: "Sam's share" }).fill('30');
@@ -102,4 +104,40 @@ test('search, month filtering, and CSV export work', async ({ page }) => {
   expect(download.suggestedFilename()).toMatch(/^homemint-expenses-\d{4}-\d{2}\.csv$/);
   await page.getByRole('button', { name: 'Previous month' }).click();
   await expect(page.getByRole('heading', { name: 'A fresh start' })).toBeVisible();
+});
+test('expenses are individual by default, filterable by payer, and changes can be undone', async ({
+  page,
+}) => {
+  await page.getByRole('button', { name: 'Add expense', exact: true }).first().click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('What was it for?').fill('Solo lunch');
+  await dialog.getByLabel('Amount (INR)').fill('250');
+  await dialog.getByRole('button', { name: 'Add expense', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await navigate(page, 'Expenses');
+  await page.getByRole('button', { name: 'Individual', exact: true }).click();
+  await expect(page.getByText('Solo lunch', { exact: true })).toBeVisible();
+  await expect(page.getByText('Weekly grocery run', { exact: true })).not.toBeVisible();
+  await page.getByRole('button', { name: 'All', exact: true }).click();
+  await page.getByRole('group', { name: 'Paid by' }).getByRole('button', { name: /^Sam/ }).click();
+  await expect(page.getByText('Solo lunch', { exact: true })).not.toBeVisible();
+  await expect(page.getByText('School supplies', { exact: true })).toBeVisible();
+  await page
+    .getByRole('group', { name: 'Paid by' })
+    .getByRole('button', { name: /^Everyone/ })
+    .click();
+  await page.getByRole('button', { name: 'Delete Solo lunch', exact: true }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Delete expense', exact: true })
+    .click();
+  await expect(page.getByText('Solo lunch', { exact: true })).not.toBeVisible();
+  await page.getByRole('status').getByRole('button', { name: 'Undo' }).click();
+  await expect(page.getByText('Solo lunch', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit Solo lunch', exact: true }).click();
+  await dialog.getByLabel('Amount (INR)').fill('300');
+  await dialog.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByText('−₹300', { exact: true })).toBeVisible();
+  await page.getByRole('status').getByRole('button', { name: 'Undo' }).click();
+  await expect(page.getByText('−₹250', { exact: true })).toBeVisible();
 });

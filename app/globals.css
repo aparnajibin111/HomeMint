@@ -2841,3 +2841,89 @@ input[type='checkbox'] {
     font-size: 10px;
   }
 }
+
+/* Expense types, payer filter, row actions and undo */
+.visibility.individual {
+  color: #5f7f96;
+  background: #eef4f8;
+  border: 1px solid #dfe9f0;
+}
+.table-head,
+.expense-row {
+  grid-template-columns: minmax(180px, 2fr) 1fr 90px 105px 64px;
+}
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+.row-delete {
+  color: #b27676;
+}
+.payer-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 23px 16px;
+}
+.payer-caption {
+  font-size: 11px;
+  color: #77856b;
+  margin-right: 4px;
+}
+.payer-strip button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--paper);
+  font-size: 11px;
+  color: #5f6f58;
+}
+.payer-strip button strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.payer-strip button.active {
+  border-color: #9bb492;
+  background: #f2f6eb;
+  color: var(--green-dark);
+}
+.split-toggle {
+  margin-bottom: 14px;
+}
+.toast .toast-undo {
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: #ffffff1f;
+  color: #fff;
+  font-weight: 600;
+}
+@media (max-width: 1250px) {
+  .table-head,
+  .expense-row {
+    grid-template-columns: minmax(150px, 1.7fr) 1fr 70px 90px 56px;
+  }
+}
+@media (max-width: 760px) {
+  .expense-row,
+  .table-head {
+    grid-template-columns: minmax(95px, 1fr) 62px 70px 48px;
+  }
+  .recent-panel .expense-row {
+    grid-template-columns: minmax(95px, 1fr) 62px 70px 48px;
+  }
+  .row-actions .icon-button,
+  .recent-panel .row-actions .icon-button {
+    width: 22px;
+  }
+  .payer-strip {
+    padding: 0 16px 14px;
+  }
+}

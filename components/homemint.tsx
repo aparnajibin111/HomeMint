@@ -31,6 +31,8 @@ import {
   Target,
   Trash2,
   TrendingUp,
+  Undo2,
+  User,
   Users,
   Wallet,
   X,
@@ -46,6 +48,7 @@ import {
 import {
   balances,
   categories,
+  expenseKind,
   makeDemo,
   money,
   monthKey,
@@ -192,11 +195,12 @@ export default function HomeMint() {
   const [connectionIssue, setConnectionIssue] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [toast, setToast] = useState('');
+  const [notice, setNotice] = useState<{ text: string; undo?: () => Promise<void> } | null>(null);
   const [menu, setMenu] = useState(false);
   const [query, setQuery] = useState('');
   const [visibility, setVisibility] = useState('all');
   const [category, setCategory] = useState('all');
+  const [payer, setPayer] = useState('all');
   const [inviteLink, setInviteLink] = useState('');
   const [inviteToken, setInviteToken] = useState('');
   const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'reset' | 'recovery'>('signin');
@@ -214,7 +218,8 @@ export default function HomeMint() {
   const visibleExpenses = monthly
     .filter(
       (e) =>
-        (visibility === 'all' || e.visibility === visibility) &&
+        (visibility === 'all' || expenseKind(e) === visibility) &&
+        (payer === 'all' || e.owner_id === payer) &&
         (category === 'all' || e.category === category) &&
         `${e.title} ${e.category}`.toLowerCase().includes(query.toLowerCase()),
     )
@@ -225,6 +230,8 @@ export default function HomeMint() {
   });
   const spendingFor = (cat: Category) =>
     shared.filter((e) => e.category === cat).reduce((sum, e) => sum + e.amount, 0);
+  const setToast = (text: string, undo?: () => Promise<void>) =>
+    setNotice(text ? { text, undo } : null);
 
   useEffect(() => {
     let active = true;
@@ -302,22 +309,27 @@ export default function HomeMint() {
         localStorage.setItem(demoKey, JSON.stringify(data));
       } catch {
         queueMicrotask(() =>
-          setToast('Browser storage is full. Your latest change may not survive a reload.'),
+          setNotice({
+            text: 'Browser storage is full. Your latest change may not survive a reload.',
+          }),
         );
       }
     }
   }, [data, ready, demo]);
   useEffect(() => {
-    if (toast) {
-      const timer = setTimeout(() => setToast(''), 6000);
+    if (notice) {
+      const timer = setTimeout(() => setNotice(null), notice.undo ? 10000 : 6000);
       return () => clearTimeout(timer);
     }
-  }, [toast]);
+  }, [notice]);
 
   function navigate(next: Page) {
     setPage(next);
     setMenu(false);
     setQuery('');
+    setVisibility('all');
+    setPayer('all');
+    setCategory('all');
     setError('');
   }
   function open(next: Modal, item: Expense | Budget | Goal | null = null) {
@@ -344,10 +356,7 @@ export default function HomeMint() {
       setNeedsHousehold(false);
     }
   }
-  async function saveRecord(
-    table: 'expenses' | 'budgets' | 'goals',
-    value: Expense | Budget | Goal,
-  ) {
+  async function persist(table: 'expenses' | 'budgets' | 'goals', value: Expense | Budget | Goal) {
     if (demo)
       setData((prev) => ({
         ...prev,
@@ -358,23 +367,41 @@ export default function HomeMint() {
         .from(table)
         .upsert({ ...value, household_id: data.household.id });
       if (error) throw error;
-      await refresh();
     }
+  }
+  async function eraseExpense(id: string) {
+    if (demo) setData((prev) => ({ ...prev, expenses: prev.expenses.filter((e) => e.id !== id) }));
+    else {
+      const { error } = await supabase!.from('expenses').delete().eq('id', id);
+      if (error) throw error;
+    }
+  }
+  async function saveRecord(
+    table: 'expenses' | 'budgets' | 'goals',
+    value: Expense | Budget | Goal,
+  ) {
+    const previous = table === 'expenses' ? data.expenses.find((e) => e.id === value.id) : null;
+    await persist(table, value);
+    if (!demo) await refresh();
     setModal(null);
-    setToast(
-      `${table === 'expenses' ? 'Expense' : table === 'budgets' ? 'Budget' : 'Goal'} saved. Looking good!`,
-    );
+    if (table === 'expenses')
+      setToast(previous ? 'Expense updated.' : 'Expense added.', () =>
+        previous ? persist('expenses', previous) : eraseExpense(value.id),
+      );
+    else setToast(`${table === 'budgets' ? 'Budget' : 'Goal'} saved. Looking good!`);
   }
   async function removeExpense(expense: Expense) {
-    if (demo)
-      setData((prev) => ({ ...prev, expenses: prev.expenses.filter((e) => e.id !== expense.id) }));
-    else {
-      const { error } = await supabase!.from('expenses').delete().eq('id', expense.id);
-      if (error) throw error;
-      await refresh();
-    }
+    await eraseExpense(expense.id);
+    if (!demo) await refresh();
     setConfirmDelete(null);
-    setToast('Expense deleted.');
+    setToast('Expense deleted.', () => persist('expenses', expense));
+  }
+  function undoLast(undo: () => Promise<void>) {
+    void run(async () => {
+      await undo();
+      if (!demo) await refresh();
+      setToast('Change undone.');
+    });
   }
   function shiftMonth(amount: number) {
     const date = new Date(`${month}-01T12:00:00`);
@@ -416,7 +443,7 @@ export default function HomeMint() {
         <div className="table-head">
           <span>Transaction</span>
           <span>Category</span>
-          <span>Visibility</span>
+          <span>Type</span>
           <span>Amount</span>
           <span />
         </div>
@@ -439,20 +466,29 @@ export default function HomeMint() {
               </div>
             </div>
             <span className="category-label">{e.category}</span>
-            <span className={`visibility ${e.visibility}`}>
-              {e.visibility === 'private' ? <LockKeyhole size={12} /> : <Users size={12} />}
-              {e.visibility === 'private' ? 'Only you' : 'Shared'}
-            </span>
+            <ExpenseKindBadge expense={e} />
             <strong className="expense-amount">−{fmt(e.amount)}</strong>
             <div className="row-actions">
               {e.owner_id === userId && (
-                <button
-                  aria-label={`Edit ${e.title}`}
-                  className="icon-button"
-                  onClick={() => open('expense', e)}
-                >
-                  <Pencil size={15} />
-                </button>
+                <>
+                  <button
+                    aria-label={`Edit ${e.title}`}
+                    className="icon-button"
+                    onClick={() => open('expense', e)}
+                  >
+                    <Pencil size={15} />
+                  </button>
+                  <button
+                    aria-label={`Delete ${e.title}`}
+                    className="icon-button row-delete"
+                    onClick={() => {
+                      setError('');
+                      setConfirmDelete(e);
+                    }}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -978,10 +1014,11 @@ export default function HomeMint() {
           {page === 'Expenses' && (
             <section className="panel">
               <div className="expense-toolbar">
-                <div className="filter-tabs" aria-label="Expense visibility">
+                <div className="filter-tabs" aria-label="Expense type">
                   {[
-                    ['all', 'All expenses'],
-                    ['shared', 'Shared'],
+                    ['all', 'All'],
+                    ['split', 'Split'],
+                    ['individual', 'Individual'],
                     ['private', 'Only me'],
                   ].map(([value, label]) => (
                     <button
@@ -1021,6 +1058,26 @@ export default function HomeMint() {
                     <Download size={18} />
                   </button>
                 </div>
+              </div>
+              <div className="payer-strip" role="group" aria-label="Paid by">
+                <span className="payer-caption">Paid by</span>
+                {[{ id: 'all', name: 'Everyone' }, ...data.members].map((m) => (
+                  <button
+                    key={m.id}
+                    className={payer === m.id ? 'active' : ''}
+                    aria-pressed={payer === m.id}
+                    onClick={() => setPayer(m.id)}
+                  >
+                    <span>{m.id === userId ? `${m.name} (you)` : m.name}</span>
+                    <strong>
+                      {fmt(
+                        monthly
+                          .filter((e) => m.id === 'all' || e.owner_id === m.id)
+                          .reduce((s, e) => s + e.amount, 0),
+                      )}
+                    </strong>
+                  </button>
+                ))}
               </div>
               {expenseList()}
               <div className="table-footer">
@@ -1848,11 +1905,17 @@ export default function HomeMint() {
           </div>
         </Dialog>
       )}
-      {toast && (
+      {notice && (
         <div className="toast" role="status">
           <Check size={17} />
-          <span>{toast}</span>
-          <button aria-label="Dismiss notification" onClick={() => setToast('')}>
+          <span>{notice.text}</span>
+          {notice.undo && (
+            <button className="toast-undo" disabled={busy} onClick={() => undoLast(notice.undo!)}>
+              <Undo2 size={15} />
+              Undo
+            </button>
+          )}
+          <button aria-label="Dismiss notification" onClick={() => setNotice(null)}>
             <X size={16} />
           </button>
         </div>
@@ -1867,6 +1930,20 @@ export default function HomeMint() {
   );
 }
 
+function ExpenseKindBadge({ expense }: { expense: Expense }) {
+  const kind = expenseKind(expense);
+  const Icon = kind === 'private' ? LockKeyhole : kind === 'split' ? Users : User;
+  return (
+    <span className={`visibility ${kind === 'split' ? 'shared' : kind}`}>
+      <Icon size={12} />
+      {kind === 'private'
+        ? 'Only you'
+        : kind === 'split'
+          ? `Split · ${Object.keys(expense.splits).length}`
+          : 'Individual'}
+    </span>
+  );
+}
 function FormError({ error }: { error: string }) {
   return error ? (
     <p className="form-error" role="alert">
@@ -1989,11 +2066,13 @@ function ExpenseForm({
   onSave: (expense: Expense) => void;
   onDelete?: () => void;
 }) {
+  const wasSplit = !!expense && expenseKind(expense) === 'split';
   const [visibility, setVisibility] = useState(expense?.visibility || 'shared');
+  const [split, setSplit] = useState(wasSplit);
   const [selected, setSelected] = useState(
-    expense ? Object.keys(expense.splits) : data.members.map((m) => m.id),
+    wasSplit && expense ? Object.keys(expense.splits) : data.members.map((m) => m.id),
   );
-  const [splitMode, setSplitMode] = useState(expense ? 'custom' : 'equal');
+  const [splitMode, setSplitMode] = useState(wasSplit ? 'custom' : 'equal');
   const [amount, setAmount] = useState(String(expense?.amount || ''));
   const [localError, setLocalError] = useState('');
   function submit(e: FormEvent<HTMLFormElement>) {
@@ -2003,7 +2082,7 @@ function ExpenseForm({
     try {
       const total = Math.round(Number(amount) * 100) / 100;
       const splits =
-        visibility === 'private'
+        visibility === 'private' || !split
           ? { [userId]: total }
           : splitMode === 'equal'
             ? splitEvenly(total, selected)
@@ -2080,7 +2159,7 @@ function ExpenseForm({
           <Users size={18} />
           <span>
             <strong>Household</strong>
-            <small>Better together</small>
+            <small>Everyone can see it</small>
           </span>
           {visibility === 'shared' && <Check size={16} />}
         </button>
@@ -2092,12 +2171,20 @@ function ExpenseForm({
           <LockKeyhole size={18} />
           <span>
             <strong>Only me</strong>
-            <small>Just for you</small>
+            <small>Hidden from others</small>
           </span>
           {visibility === 'private' && <Check size={16} />}
         </button>
       </div>
-      {visibility === 'shared' && (
+      {visibility === 'shared' && data.members.length > 1 && (
+        <label className="checkbox-label split-toggle">
+          <input type="checkbox" checked={split} onChange={(e) => setSplit(e.target.checked)} />
+          <span>
+            Split this expense <small>Share the cost with other household members</small>
+          </span>
+        </label>
+      )}
+      {visibility === 'shared' && split && (
         <div className="split-section">
           <div className="split-heading">
             <strong>Split the expense</strong>
@@ -2165,7 +2252,9 @@ function ExpenseForm({
         <span>
           {visibility === 'private'
             ? 'Only you can view this expense, even in shared totals.'
-            : 'Visible to your household. Only you can edit it.'}
+            : split
+              ? 'Visible to your household and split between the people selected. Only you can edit it.'
+              : 'Visible to your household as your own spending. Nobody else owes a share.'}
         </span>
       </div>
       <FormError error={localError || error} />

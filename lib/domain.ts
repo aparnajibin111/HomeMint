@@ -89,6 +89,11 @@ export function validateExpense(expense: Omit<Expense, 'id'>, memberIds: string[
   )
     throw new Error('Private expenses can only be assigned to you.');
 }
+/** Private: hidden from others. Split: shared with other members. Individual: visible, paid for yourself. */
+export function expenseKind(expense: Expense): 'private' | 'split' | 'individual' {
+  if (expense.visibility === 'private') return 'private';
+  return Object.keys(expense.splits).some((id) => id !== expense.owner_id) ? 'split' : 'individual';
+}
 export function balances(expenses: Expense[], memberIds: string[]) {
   const result: Record<string, number> = Object.fromEntries(memberIds.map((id) => [id, 0]));
   for (const expense of expenses.filter((e) => e.visibility === 'shared')) {
@@ -183,7 +188,7 @@ export function makeDemo(): Data {
         date: date(19),
         owner_id: 'you',
         visibility: 'shared',
-        splits: { you: 1200, sam: 1200 },
+        splits: { you: 2400 },
         recurring: false,
       },
       {
